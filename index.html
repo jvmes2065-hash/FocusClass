@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FocusClass</title>
+<style>
+:root{--bg:#f1f5f9;--card:#fff;--tx:#0f172a;--mut:#64748b;--pri:#2563eb;--bd:#e2e8f0}
+@media(prefers-color-scheme:dark){:root{--bg:#0f172a;--card:#1e293b;--tx:#f1f5f9;--mut:#94a3b8;--bd:#334155}}
+*{box-sizing:border-box}body{margin:0;font:16px system-ui,sans-serif;background:var(--bg);color:var(--tx)}
+header{display:flex;gap:12px;align-items:center;padding:12px 16px;background:var(--card);border-bottom:1px solid var(--bd)}
+header span{flex:1;color:var(--mut);font-size:14px;overflow:hidden;text-overflow:ellipsis}
+main,.wrap{max-width:720px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin:0 0 14px}
+h2,h3{margin:0 0 10px}input,select{width:100%;padding:10px;margin:4px 0 8px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font:inherit}
+button{padding:10px 14px;border:0;border-radius:8px;background:var(--pri);color:#fff;font:inherit;cursor:pointer;margin:2px 4px 2px 0}
+button.alt{background:var(--mut)}button.bad{background:#dc2626}button.ok{background:#16a34a}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid var(--bd)}
+.code{font-size:32px;letter-spacing:6px;font-weight:700}.mut{color:var(--mut);font-size:14px}.err{color:#dc2626}
+.tag{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--bd)}
+</style></head>
+<body><div id="app"></div><script type="module" src="app.js"></script></body></html>
