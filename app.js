@@ -10,20 +10,28 @@ const $ = id => document.getElementById(id), app = $("app");
 const fmt = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
 const toMin = s => { const [h, m] = s.split(":"); return +h * 60 + +m; };
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const LOGO = n => `<svg viewBox="0 0 100 100" width="${n}" height="${n}" aria-hidden="true"><rect width="100" height="100" rx="22" fill="#fff"/><circle cx="50" cy="50" r="31" fill="none" stroke="#2563EB" stroke-width="5"/><circle cx="50" cy="50" r="19" fill="none" stroke="#93C5FD" stroke-width="5"/><circle cx="50" cy="50" r="7" fill="#2563EB"/></svg>`;
 const PRESETS = [{ pkg: "com.facebook.orca", name: "Messenger" }, { pkg: "com.google.android.calculator", name: "Calculator" }];
 let subs = [], cl = [];
 const stop = a => { a.forEach(f => f()); a.length = 0; };
-const header = u => `<header><b>FocusClass</b><span>${esc(u.email)}</span><button id="out" class="alt">Log out</button></header>`;
+const header = u => `<header>${LOGO(34)}<b>FocusClass</b><span>${esc(u.email)}</span><button id="out">Log out</button></header>`;
 const guard = fn => async (...a) => { try { await fn(...a); } catch (e) { alert(e.message); } };
+
+const t0 = performance.now(); let splashGone = false;
+const hideSplash = () => {
+  if (splashGone) return; splashGone = true; const el = $("splash"); if (!el) return;
+  setTimeout(() => { el.classList.add("hide"); setTimeout(() => el.remove(), 400); }, Math.max(0, 1000 - (performance.now() - t0)));
+};
+setTimeout(hideSplash, 6000);
 
 onAuthStateChanged(auth, u => {
   stop(subs); stop(cl);
-  if (!u) return authView();
-  localStorage.role === "president" ? president(u) : teacher(u);
+  if (!u) authView(); else if (localStorage.role === "president") president(u); else teacher(u);
+  hideSplash();
 });
 
 function authView() {
-  app.innerHTML = `<div class="wrap"><div class="card"><h2>FocusClass</h2>
+  app.innerHTML = `<div class="hero">${LOGO(76)}<h1>FocusClass</h1><p>Stay focused. Learn better.</p></div><div class="wrap pull"><div class="card"><h2>Welcome</h2>
   <label class="mut">I am a</label><select id="role"><option value="teacher">Teacher</option><option value="president">Class president</option></select>
   <input id="em" type="email" placeholder="Email"><input id="pw" type="password" placeholder="Password (6+ characters)">
   <button id="login">Log in</button><button id="reg" class="alt">Create account</button><p id="err" class="err"></p></div></div>`;
