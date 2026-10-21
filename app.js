@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, setDoc, updateDoc, addDoc, collection, onSnapshot, query, where, arrayUnion, arrayRemove }
+import { getFirestore, doc, setDoc, updateDoc, addDoc, collection, onSnapshot, query, where, orderBy, limit, arrayUnion, arrayRemove }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 
@@ -10,6 +10,14 @@ const $ = id => document.getElementById(id), app = $("app");
 const fmt = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
 const toMin = s => { const [h, m] = s.split(":"); return +h * 60 + +m; };
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const dkey = ms => { const x = new Date(ms); return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); };
+const today = () => dkey(Date.now());
+const APK_URL = "https://github.com/jvmes2065-hash/FocusClass-App/releases/latest/download/app-debug.apk";
+const downloadCard = () => /iPhone|iPad|iPod/.test(navigator.userAgent)
+  ? `<div class="card"><h3>FocusClass app</h3><p class="mut">The app is for Android phones. On iPhone you can use this website.</p></div>`
+  : `<div class="card"><h3>Download the Android app</h3><p class="mut">For students. It follows the class schedule and allowed apps set by the teacher.</p>
+    <a class="btn" href="${APK_URL}">Download app</a><button class="alt" onclick="navigator.clipboard.writeText('${APK_URL}');this.textContent='Link copied'">Copy link</button>
+    <p class="mut">1. Open the downloaded file and allow "Install unknown apps" if asked.<br>2. If a switch is greyed out: Settings, Apps, FocusClass, menu, Allow restricted settings.<br>3. Log in or sign up, then join your class with the code.</p></div>`;
 const LOGO = n => `<svg viewBox="0 0 100 100" width="${n}" height="${n}" aria-hidden="true"><rect width="100" height="100" rx="22" fill="#fff"/><circle cx="50" cy="50" r="31" fill="none" stroke="#2563EB" stroke-width="5"/><circle cx="50" cy="50" r="19" fill="none" stroke="#93C5FD" stroke-width="5"/><circle cx="50" cy="50" r="7" fill="#2563EB"/></svg>`;
 const PRESETS = [{ pkg: "com.facebook.orca", name: "Messenger" }, { pkg: "com.google.android.calculator", name: "Calculator" }];
 let subs = [], cl = [];
@@ -34,7 +42,7 @@ function authView() {
   app.innerHTML = `<div class="hero">${LOGO(76)}<h1>FocusClass</h1><p>Stay focused. Learn better.</p></div><div class="wrap pull"><div class="card"><h2>Welcome</h2>
   <label class="mut">I am a</label><select id="role"><option value="teacher">Teacher</option><option value="president">Class president</option></select>
   <input id="em" type="email" placeholder="Email"><input id="pw" type="password" placeholder="Password (6+ characters)">
-  <button id="login">Log in</button><button id="reg" class="alt">Create account</button><p id="err" class="err"></p></div></div>`;
+  <button id="login">Log in</button><button id="reg" class="alt">Create account</button><p id="err" class="err"></p></div>${downloadCard()}</div>`;
   const go = fn => async () => { localStorage.role = $("role").value;
     try { await fn(auth, $("em").value.trim(), $("pw").value); } catch (e) { $("err").textContent = e.message; } };
   $("login").onclick = go(signInWithEmailAndPassword); $("reg").onclick = go(createUserWithEmailAndPassword);
@@ -46,7 +54,7 @@ function teacher(u) {
   subs.push(onSnapshot(query(collection(db, "classes"), where("teacherUid", "==", u.uid)), s => {
     const list = s.docs.map(d => ({ id: d.id, ...d.data() }));
     const cur = localStorage.cur && list.find(c => c.id === localStorage.cur) ? localStorage.cur : list[0]?.id;
-    $("main").innerHTML = `<div class="card"><h3>My classes</h3>
+    $("main").innerHTML = `${downloadCard()}<div class="card"><h3>My classes</h3>
       ${list.length ? `<select id="pick">${list.map(c => `<option value="${c.id}" ${c.id === cur ? "selected" : ""}>${esc(c.name)} (${c.id})</option>`).join("")}</select>` : `<p class="mut">No class yet. Create your first one.</p>`}
       <input id="cname" placeholder="New class name (e.g. Grade 10 - Math)"><button id="mk">Create class</button></div><div id="cls"></div>`;
     $("mk").onclick = guard(async () => {
@@ -62,9 +70,51 @@ function teacher(u) {
 }
 
 function openClass(u, id) {
-  stop(cl); let C = null, reqs = [], logs = [];
+  stop(cl); let C = null, reqs = [], logs = [], studs = [], recs = [], pinDoc = "", day = today();
   const ref = doc(db, "classes", id);
   const log = text => addDoc(collection(db, "classes", id, "log"), { by: u.email, text, at: Date.now() });
+
+  const hash = async x => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(x)))].map(b => b.toString(16).padStart(2, "0")).join("");
+  const setPin = guard(async pin => {
+    if (!/^\d{4,8}$/.test(pin)) return alert("The PIN must be 4 to 8 digits.");
+    await updateDoc(ref, { pinHash: await hash(id + ":" + pin) });
+    await setDoc(doc(db, "classes", id, "private", "pin"), { pin });
+    await log("Changed the leave PIN");
+  });
+  const securityCard = () => `<div class="card"><h3>Leave PIN</h3><p class="mut">Students need this PIN to leave the class or log out of the app.</p>
+    <div class="code" style="font-size:28px">${pinDoc ? esc(pinDoc) : "Not set"}</div>
+    <input id="pinin" inputmode="numeric" maxlength="8" placeholder="Your own PIN (4-8 digits)"><button id="pinsave">Save PIN</button><button id="pinrnd" class="alt">Random PIN</button></div>`;
+  const bindSecurity = () => {
+    $("pinsave").onclick = () => setPin($("pinin").value.trim());
+    $("pinrnd").onclick = () => setPin(String(100000 + crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
+  };
+  const drawStudents = () => {
+    const el = $("sx"); if (!el) return; const now = Date.now();
+    el.innerHTML = `<div class="card"><h3>Students (${studs.length})</h3>${[...studs].sort((a, b) => (a.email || "").localeCompare(b.email || "")).map(s => {
+      const on = now - s.lastSeen < 180000;
+      return `<div class="row"><div>${esc(s.email)}<div class="mut">${on ? "" : "Last seen " + new Date(s.lastSeen).toLocaleString() + " | "}Blocked today: ${s.blocked || 0} | Uninstall protection: ${s.admin ? "on" : "OFF"}</div></div><span class="tag" style="${on ? "" : "background:#FEE2E2;color:#991B1B"}">${on ? "Online" : "Offline"}</span></div>`;
+    }).join("") || '<p class="mut">No students yet. Share the class code.</p>'}</div>`;
+  };
+  const LBL = { checkin: "Checked in", joined: "Joined", left: "Left", blocked: "Blocked app", tamper: "Security alert" };
+  const drawRecords = () => {
+    const el = $("rx"); if (!el) return;
+    const list = recs.filter(r => dkey(r.at) === day);
+    const present = new Set(list.filter(r => r.type === "checkin").map(r => r.email));
+    const absent = studs.map(s => s.email).filter(e => !present.has(e));
+    el.innerHTML = `<div class="card"><h3>Class record</h3><input id="day" type="date" value="${day}">
+      <p><b>Present (${present.size}):</b> ${[...present].map(esc).join(", ") || "none"}</p>
+      <p><b>Not checked in (${absent.length}):</b> ${absent.map(esc).join(", ") || "none"}</p>
+      ${list.slice(0, 50).map(r => `<div class="row"><div>${esc(r.email)}<div class="mut">${LBL[r.type] || esc(r.type)}: ${esc(r.text)}</div></div><span class="mut">${new Date(r.at).toLocaleTimeString()}</span></div>`).join("") || '<p class="mut">No records for this day.</p>'}
+      <button id="csv" class="alt">Download all (CSV)</button></div>`;
+    $("day").onchange = e => { day = e.target.value || today(); drawRecords(); };
+    $("csv").onclick = () => {
+      const q = v => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+      const rows = [["Date", "Time", "Student", "Type", "Details"], ...recs.map(r => [new Date(r.at).toLocaleDateString(), new Date(r.at).toLocaleTimeString(), r.email, r.type, r.text])];
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([rows.map(r => r.map(q).join(",")).join("\n")], { type: "text/csv" }));
+      a.download = "focusclass-" + id + ".csv"; a.click();
+    };
+  };
   const draw = () => {
     if (!C || !$("cls")) return;
     const paused = C.pauseUntil > Date.now(), pend = reqs.filter(r => r.status === "pending");
@@ -82,7 +132,7 @@ function openClass(u, id) {
       <p class="mut">Phone, SMS and the home screen are always allowed by the Android app.</p></div>
     <div class="card"><h3>Class president</h3><p class="mut">Ask your president to log in and send you their ID.</p>
       <input id="pid" placeholder="President's ID" value="${esc(C.presidentUid)}"><button id="ps">Save</button></div>
-    <div class="card"><h3>Activity log</h3>${logs.slice(0, 10).map(l => `<div class="row"><span>${esc(l.text)}</span><span class="mut">${new Date(l.at).toLocaleString()}</span></div>`).join("") || '<p class="mut">Empty</p>'}</div>`;
+    ${securityCard()}<div id="sx"></div><div id="rx"></div><div class="card"><h3>Activity log</h3>${logs.slice(0, 10).map(l => `<div class="row"><span>${esc(l.text)}</span><span class="mut">${new Date(l.at).toLocaleString()}</span></div>`).join("") || '<p class="mut">Empty</p>'}</div>`;
     const up = (d, msg) => guard(async () => { await updateDoc(ref, d); if (msg) await log(msg); });
     $("tg").onclick = up({ enabled: !C.enabled }, C.enabled ? "Turned class mode OFF" : "Turned class mode ON");
     $("p30").onclick = up({ pauseUntil: Date.now() + 30 * 6e4 }, "Paused 30 min");
@@ -91,6 +141,7 @@ function openClass(u, id) {
     $("sv").onclick = () => up({ startMin: toMin($("st").value), endMin: toMin($("en").value) }, `Schedule set ${$("st").value}-${$("en").value}`)();
     $("ad").onclick = () => { const pkg = $("ap").value.trim(), name = $("an").value.trim() || pkg; if (pkg) up({ allowed: arrayUnion({ pkg, name }) }, "Allowed " + name)(); };
     $("ps").onclick = () => up({ presidentUid: $("pid").value.trim() }, "Assigned class president")();
+    bindSecurity(); drawStudents(); drawRecords();
     document.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { const a = C.allowed.find(x => x.pkg === b.dataset.rm); up({ allowed: arrayRemove(a) }, "Removed " + a.name)(); });
     document.querySelectorAll("[data-a]").forEach(b => b.onclick = guard(async () => {
       const r = reqs.find(x => x.id === b.dataset.a);
@@ -105,11 +156,15 @@ function openClass(u, id) {
   cl.push(onSnapshot(ref, s => { C = s.data(); draw(); }));
   cl.push(onSnapshot(collection(db, "classes", id, "requests"), s => { reqs = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.at - a.at); draw(); }));
   cl.push(onSnapshot(collection(db, "classes", id, "log"), s => { logs = s.docs.map(d => d.data()).sort((a, b) => b.at - a.at); draw(); }));
+  cl.push(onSnapshot(collection(db, "classes", id, "students"), s => { studs = s.docs.map(d => ({ id: d.id, ...d.data() })); drawStudents(); drawRecords(); }));
+  cl.push(onSnapshot(query(collection(db, "classes", id, "records"), orderBy("at", "desc"), limit(500)), s => { recs = s.docs.map(d => d.data()); drawRecords(); }));
+  cl.push(onSnapshot(doc(db, "classes", id, "private", "pin"), s => { pinDoc = s.exists() ? s.data().pin : ""; if (C) draw(); }, () => {}));
+  const tm = setInterval(drawStudents, 30000); cl.push(() => clearInterval(tm));
 }
 
 /* ---------------- CLASS PRESIDENT ---------------- */
 function president(u) {
-  app.innerHTML = header(u) + `<main><div class="card"><h3>Your ID</h3><p class="mut">Send this to your teacher so they can make you class president.</p>
+  app.innerHTML = header(u) + `<main>${downloadCard()}<div class="card"><h3>Your ID</h3><p class="mut">Send this to your teacher so they can make you class president.</p>
     <input readonly value="${u.uid}" onclick="this.select()"></div>
     <div class="card"><h3>Class</h3><input id="code" placeholder="Class code" value="${esc(localStorage.code || "")}"><button id="go">Open class</button></div><div id="cls"></div></main>`;
   $("out").onclick = () => signOut(auth);
