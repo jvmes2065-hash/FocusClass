@@ -22,6 +22,12 @@ button{padding:11px 16px;border:0;border-radius:12px;background:var(--pri);color
 button.alt{background:transparent;color:var(--pri);border:1.5px solid var(--pri)}button.bad{background:var(--bad)}button.ok{background:var(--ok)}
 .row{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--bd)}
 .code{font-size:36px;letter-spacing:8px;font-weight:800;color:var(--pri)}.mut{color:var(--mut);font-size:14px}.err{color:var(--bad)}
+a.btn{display:inline-block;padding:11px 16px;border-radius:12px;background:var(--pri);color:#fff;font-weight:600;text-decoration:none;margin:2px 6px 8px 0}
+.tabs{display:flex;gap:6px;margin:0 0 14px}.tabs button{flex:1;margin:0;background:transparent;color:var(--mut);border:1.5px solid var(--bd)}
+.tabs button.on{background:var(--pri);color:#fff;border-color:var(--pri)}
+.avatar{width:40px;height:40px;flex:none;border-radius:50%;background:var(--pri);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:17px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:8px 0}.stats div{background:var(--bg);border-radius:12px;padding:10px 4px;text-align:center}
+.stats b{display:block;font-size:20px}.stats span{font-size:11px;color:var(--mut)}
 .tag{font-size:12px;font-weight:600;padding:3px 10px;border-radius:99px;background:var(--tag);color:var(--tagx)}
 #splash{position:fixed;inset:0;z-index:99;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(135deg,#1E3A8A,#2563EB);color:#fff;transition:opacity .4s}
 #splash.hide{opacity:0;pointer-events:none}#splash svg{animation:pop .7s ease-out both}
