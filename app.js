@@ -10,6 +10,8 @@ const $ = id => document.getElementById(id), app = $("app");
 const fmt = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
 const toMin = s => { const [h, m] = s.split(":"); return +h * 60 + +m; };
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const DN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const daysText = d => (d && d.length ? d : [2, 3, 4, 5, 6]).map(x => DN[x - 1]).join(", ");
 const dkey = ms => { const x = new Date(ms); return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); };
 const today = () => dkey(Date.now());
 const APK_URL = "https://github.com/jvmes2065-hash/FocusClass-App/releases/latest/download/app-debug.apk";
@@ -180,7 +182,7 @@ function openClass(u, id) {
       <button id="p30" class="alt">Pause 30 min</button><button id="p60" class="alt">Pause 60 min</button>${paused ? '<button id="p0">End pause</button>' : ""}</div>
     <div class="card"><h3>Pending requests (${pend.length})</h3>${pend.map(r => `<div class="row"><div>${r.type === "app" ? "Add app: <b>" + esc(r.name) + "</b> <span class=mut>" + esc(r.pkg) + "</span>" : "Pause for <b>" + r.minutes + " min</b>"}<div class="mut">${esc(r.reason)}</div></div>
       <div><button class="ok" data-a="${r.id}">Approve</button><button class="bad" data-d="${r.id}">Deny</button></div></div>`).join("") || '<p class="mut">None</p>'}</div>
-    <div class="card"><h3>Activity log</h3>${logs.slice(0, 10).map(l => `<div class="row"><span>${esc(l.text)}</span><span class="mut">${new Date(l.at).toLocaleString()}</span></div>`).join("") || '<p class="mut">Empty</p>'}</div></div><div class="tabp" data-t="set" style="display:none"><div class="card"><h3>Schedule (Mon-Fri)</h3>
+    <div class="card"><h3>Activity log</h3>${logs.slice(0, 10).map(l => `<div class="row"><span>${esc(l.text)}</span><span class="mut">${new Date(l.at).toLocaleString()}</span></div>`).join("") || '<p class="mut">Empty</p>'}</div></div><div class="tabp" data-t="set" style="display:none"><div class="card"><h3>Schedule</h3><div class="days">${DN.map((n, i) => `<label class="dchip"><input type="checkbox" class="dayc" value="${i + 1}" ${(C.days || [2, 3, 4, 5, 6]).includes(i + 1) ? "checked" : ""}>${n}</label>`).join("")}</div>
       <input id="st" type="time" value="${fmt(C.startMin)}"><input id="en" type="time" value="${fmt(C.endMin)}"><button id="sv">Save schedule</button></div>
     ${subjectsCard()}<div class="card"><h3>Allowed apps</h3>${C.allowed.map(a => `<div class="row"><div>${esc(a.name)} <span class="mut">${esc(a.pkg)}</span></div><button class="bad" data-rm="${esc(a.pkg)}">Remove</button></div>`).join("")}
       <input id="an" placeholder="App name"><input id="ap" placeholder="Package name (e.g. com.duolingo)"><button id="ad">Add app</button>
@@ -193,7 +195,11 @@ function openClass(u, id) {
     $("p30").onclick = up({ pauseUntil: Date.now() + 30 * 6e4 }, "Paused 30 min");
     $("p60").onclick = up({ pauseUntil: Date.now() + 60 * 6e4 }, "Paused 60 min");
     if ($("p0")) $("p0").onclick = up({ pauseUntil: 0 }, "Ended pause");
-    $("sv").onclick = () => up({ startMin: toMin($("st").value), endMin: toMin($("en").value) }, `Schedule set ${$("st").value}-${$("en").value}`)();
+    $("sv").onclick = () => {
+      const days = [...document.querySelectorAll(".dayc")].filter(x => x.checked).map(x => +x.value);
+      if (!days.length) return alert("Pick at least one day.");
+      up({ startMin: toMin($("st").value), endMin: toMin($("en").value), days }, `Schedule set ${$("st").value}-${$("en").value} (${daysText(days)})`)();
+    };
     $("ad").onclick = () => { const pkg = $("ap").value.trim(), name = $("an").value.trim() || pkg; if (pkg) up({ allowed: arrayUnion({ pkg, name }) }, "Allowed " + name)(); };
     $("ps").onclick = () => up({ presidentUid: $("pid").value.trim() }, "Assigned class president")();
     bindSecurity(); drawStudents(); drawRecords(); bindTabs(); bindSubjects();
@@ -232,7 +238,7 @@ function openAsPresident(u, id) {
   const draw = () => {
     if (!C) return $("cls").innerHTML = `<p class="err">Class not found.</p>`;
     $("cls").innerHTML = `<div class="card"><h3>${esc(C.name)}</h3>
-      <p>Schedule: <b>${fmt(C.startMin)} - ${fmt(C.endMin)}</b> (Mon-Fri) &middot; ${C.enabled ? "ON" : "OFF"}</p>
+      <p>Schedule: <b>${fmt(C.startMin)} - ${fmt(C.endMin)}</b> (${daysText(C.days)}) &middot; ${C.enabled ? "ON" : "OFF"}</p>
       <div class="mut">Allowed apps</div>${C.allowed.map(a => `<span class="tag">${esc(a.name)}</span> `).join("")}
       ${C.presidentUid !== u.uid ? '<p class="err">Your teacher has not made you class president yet. Send them your ID above.</p>' : ""}</div>
     <div class="card"><h3>Request an app</h3><input id="an" placeholder="App name"><input id="ap" placeholder="Package name (e.g. com.duolingo)"><input id="ar" placeholder="Reason"><button id="sa">Send request</button></div>
