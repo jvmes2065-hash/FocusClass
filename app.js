@@ -70,7 +70,7 @@ function teacher(u) {
 }
 
 function openClass(u, id) {
-  stop(cl); let C = null, reqs = [], logs = [], studs = [], recs = [], pinDoc = "", day = today();
+  stop(cl); let C = null, reqs = [], logs = [], studs = [], recs = [], pinDoc = "", day = today(), sel = null, tab = "over", pday = "";
   const ref = doc(db, "classes", id);
   const log = text => addDoc(collection(db, "classes", id, "log"), { by: u.email, text, at: Date.now() });
 
@@ -88,16 +88,52 @@ function openClass(u, id) {
     $("pinsave").onclick = () => setPin($("pinin").value.trim());
     $("pinrnd").onclick = () => setPin(String(100000 + crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
   };
+  const bToday = id => recs.filter(r => r.uid === id && r.type === "blocked" && dkey(r.at) === today()).length;
+  const fmtTime = ms => new Date(ms).toLocaleString();
   const drawStudents = () => {
     const el = $("sx"); if (!el) return; const now = Date.now();
-    el.innerHTML = `<div class="card"><h3>Students (${studs.length})</h3>${[...studs].sort((a, b) => (a.email || "").localeCompare(b.email || "")).map(s => {
-      const on = now - s.lastSeen < 180000;
-      return `<div class="row"><div>${esc(s.email)}<div class="mut">${on ? "" : "Last seen " + new Date(s.lastSeen).toLocaleString() + " | "}Blocked today: ${s.blocked || 0} | Uninstall protection: ${s.admin ? "on" : "OFF"}</div></div><span class="tag" style="${on ? "" : "background:#FEE2E2;color:#991B1B"}">${on ? "Online" : "Offline"}</span></div>`;
-    }).join("") || '<p class="mut">No students yet. Share the class code.</p>'}</div>`;
+    const st = studs.find(x => x.id === sel);
+    if (sel && st) return drawProfile(el, st, now);
+    sel = null;
+    el.innerHTML = `<div class="card"><h3>Students (${studs.length})</h3>${[...studs].sort((a, b) => (a.email || "").localeCompare(b.email || "")).map(x => {
+      const on = now - x.lastSeen < 180000;
+      return `<div class="row" data-s="${x.id}" style="cursor:pointer"><div style="display:flex;gap:10px;align-items:center"><div class="avatar">${esc((x.email || "?")[0].toUpperCase())}</div><div><b>${esc(x.email)}</b><div class="mut">Blocked today: ${bToday(x.id)} | Protection: ${x.admin ? "on" : "OFF"}</div></div></div><span class="tag" style="${on ? "" : "background:#FEE2E2;color:#991B1B"}">${on ? "Online" : "Offline"}</span></div>`;
+    }).join("") || '<p class="mut">No students yet. Share the class code.</p>'}<p class="mut">Tap a student to open their profile.</p></div>`;
+    el.querySelectorAll("[data-s]").forEach(r => r.onclick = () => { sel = r.dataset.s; pday = ""; drawStudents(); drawRecords(); });
+  };
+  const csvDownload = (rows, name) => {
+    const q = v => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([rows.map(r => r.map(q).join(",")).join("\n")], { type: "text/csv" }));
+    a.download = name; a.click();
+  };
+  const drawProfile = (el, st, now) => {
+    const mine = recs.filter(r => r.uid === st.id);
+    const days = new Set(mine.filter(r => r.type === "checkin").map(r => dkey(r.at)));
+    const blockedAll = mine.filter(r => r.type === "blocked");
+    const alerts = mine.filter(r => r.type === "tamper").length;
+    const counts = {}; blockedAll.forEach(r => { const k = String(r.text).replace("Tried to open ", ""); counts[k] = (counts[k] || 0) + 1; });
+    const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    const on = now - st.lastSeen < 180000;
+    const list = pday ? mine.filter(r => dkey(r.at) === pday) : mine;
+    el.innerHTML = `<div class="card"><button id="back" class="alt">All students</button>
+      <div style="display:flex;gap:12px;align-items:center;margin:10px 0"><div class="avatar">${esc((st.email || "?")[0].toUpperCase())}</div>
+        <div><b>${esc(st.email)}</b><div><span class="tag" style="${on ? "" : "background:#FEE2E2;color:#991B1B"}">${on ? "Online" : "Offline"}</span></div></div></div>
+      <div class="stats"><div><b>${days.size}</b><span>Days present</span></div><div><b>${bToday(st.id)}</b><span>Blocked today</span></div><div><b>${blockedAll.length}</b><span>Blocked total</span></div><div><b>${alerts}</b><span>Alerts</span></div></div>
+      <p class="mut">Last seen: ${st.lastSeen ? fmtTime(st.lastSeen) : "never"}<br>Uninstall protection: ${st.admin ? "on" : "OFF"}</p>
+      ${top.length ? `<p><b>Most blocked apps:</b> ${top.map(t => esc(t[0]) + " (" + t[1] + ")").join(", ")}</p>` : ""}</div>
+    <div class="card"><h3>Activity log</h3><input id="pday" type="date" value="${pday}"><button id="pall" class="alt">All days</button>
+      ${list.slice(0, 100).map(r => `<div class="row"><div>${LBL[r.type] || esc(r.type)}<div class="mut">${esc(r.text)}</div></div><span class="mut">${fmtTime(r.at)}</span></div>`).join("") || '<p class="mut">No activity.</p>'}
+      <button id="pcsv" class="alt">Download this student (CSV)</button></div>`;
+    $("back").onclick = () => { sel = null; drawStudents(); drawRecords(); };
+    $("pday").onchange = e => { pday = e.target.value; drawStudents(); };
+    $("pall").onclick = () => { pday = ""; drawStudents(); };
+    $("pcsv").onclick = () => csvDownload([["Date", "Time", "Type", "Details"], ...mine.map(r => [new Date(r.at).toLocaleDateString(), new Date(r.at).toLocaleTimeString(), r.type, r.text])],
+      "focusclass-" + (st.email || "student") + ".csv");
   };
   const LBL = { checkin: "Checked in", joined: "Joined", left: "Left", blocked: "Blocked app", tamper: "Security alert" };
   const drawRecords = () => {
-    const el = $("rx"); if (!el) return;
+    const el = $("rx"); if (!el) return; if (sel) { el.innerHTML = ""; return; }
     const list = recs.filter(r => dkey(r.at) === day);
     const present = new Set(list.filter(r => r.type === "checkin").map(r => r.email));
     const absent = studs.map(s => s.email).filter(e => !present.has(e));
@@ -115,24 +151,43 @@ function openClass(u, id) {
       a.download = "focusclass-" + id + ".csv"; a.click();
     };
   };
+  const subjectsCard = () => `<div class="card"><h3>Subjects</h3><p class="mut">Add class periods. Phones are only restricted during these periods, and a subject can allow extra apps (like a math app). With no subjects, the schedule above is used.</p>
+    ${(C.periods || []).map((p, i) => `<div class="row"><div><b>${esc(p.name)}</b> <span class="mut">${fmt(p.start)} - ${fmt(p.end)}</span>${p.apps && p.apps.length ? `<div class="mut">Extra apps: ${p.apps.map(esc).join(", ")}</div>` : ""}</div><button class="bad" data-sub="${i}">Remove</button></div>`).join("")}
+    <input id="sn" placeholder="Subject (e.g. Math)"><input id="ss" type="time" value="08:00"><input id="se" type="time" value="09:00"><input id="sa" placeholder="Extra apps, comma separated (optional)"><button id="sadd">Add subject</button></div>`;
+  const bindSubjects = () => {
+    $("sadd").onclick = guard(async () => {
+      const name = $("sn").value.trim(), start = toMin($("ss").value), end = toMin($("se").value);
+      if (!name || !(end > start)) return alert("Enter a subject name, and a start time that is before the end time.");
+      const apps = $("sa").value.split(",").map(x => x.trim()).filter(Boolean);
+      const list = [...(C.periods || []), { name, start, end, apps }].sort((a, b) => a.start - b.start);
+      await updateDoc(ref, { periods: list }); await log("Added subject " + name);
+    });
+    document.querySelectorAll("[data-sub]").forEach(b => b.onclick = guard(async () => {
+      await updateDoc(ref, { periods: (C.periods || []).filter((_, i) => i !== +b.dataset.sub) }); await log("Removed a subject");
+    }));
+  };
+  const showTab = () => {
+    document.querySelectorAll(".tabp").forEach(p => p.style.display = p.dataset.t === tab ? "" : "none");
+    document.querySelectorAll("[data-tab]").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
+  };
+  const bindTabs = () => { document.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; showTab(); }); showTab(); };
   const draw = () => {
     if (!C || !$("cls")) return;
     const paused = C.pauseUntil > Date.now(), pend = reqs.filter(r => r.status === "pending");
-    $("cls").innerHTML = `
-    <div class="card"><div class="mut">Class code (share with president and Android students)</div><div class="code">${id}</div>
+    $("cls").innerHTML = `<div class="tabs"><button data-tab="over">Overview</button><button data-tab="set">Settings</button><button data-tab="stu">Students</button></div><div class="tabp" data-t="over"><div class="card"><div class="mut">Class code (share with president and Android students)</div><div class="code">${id}</div>
       <p>Status: <b>${!C.enabled ? "OFF" : paused ? "Paused until " + new Date(C.pauseUntil).toLocaleTimeString() : "Class mode ON"}</b></p>
       <button id="tg" class="${C.enabled ? "bad" : "ok"}">${C.enabled ? "Turn OFF" : "Turn ON"}</button>
       <button id="p30" class="alt">Pause 30 min</button><button id="p60" class="alt">Pause 60 min</button>${paused ? '<button id="p0">End pause</button>' : ""}</div>
-    <div class="card"><h3>Schedule (Mon-Fri)</h3>
-      <input id="st" type="time" value="${fmt(C.startMin)}"><input id="en" type="time" value="${fmt(C.endMin)}"><button id="sv">Save schedule</button></div>
     <div class="card"><h3>Pending requests (${pend.length})</h3>${pend.map(r => `<div class="row"><div>${r.type === "app" ? "Add app: <b>" + esc(r.name) + "</b> <span class=mut>" + esc(r.pkg) + "</span>" : "Pause for <b>" + r.minutes + " min</b>"}<div class="mut">${esc(r.reason)}</div></div>
       <div><button class="ok" data-a="${r.id}">Approve</button><button class="bad" data-d="${r.id}">Deny</button></div></div>`).join("") || '<p class="mut">None</p>'}</div>
-    <div class="card"><h3>Allowed apps</h3>${C.allowed.map(a => `<div class="row"><div>${esc(a.name)} <span class="mut">${esc(a.pkg)}</span></div><button class="bad" data-rm="${esc(a.pkg)}">Remove</button></div>`).join("")}
+    <div class="card"><h3>Activity log</h3>${logs.slice(0, 10).map(l => `<div class="row"><span>${esc(l.text)}</span><span class="mut">${new Date(l.at).toLocaleString()}</span></div>`).join("") || '<p class="mut">Empty</p>'}</div></div><div class="tabp" data-t="set" style="display:none"><div class="card"><h3>Schedule (Mon-Fri)</h3>
+      <input id="st" type="time" value="${fmt(C.startMin)}"><input id="en" type="time" value="${fmt(C.endMin)}"><button id="sv">Save schedule</button></div>
+    ${subjectsCard()}<div class="card"><h3>Allowed apps</h3>${C.allowed.map(a => `<div class="row"><div>${esc(a.name)} <span class="mut">${esc(a.pkg)}</span></div><button class="bad" data-rm="${esc(a.pkg)}">Remove</button></div>`).join("")}
       <input id="an" placeholder="App name"><input id="ap" placeholder="Package name (e.g. com.duolingo)"><button id="ad">Add app</button>
       <p class="mut">Phone, SMS and the home screen are always allowed by the Android app.</p></div>
     <div class="card"><h3>Class president</h3><p class="mut">Ask your president to log in and send you their ID.</p>
       <input id="pid" placeholder="President's ID" value="${esc(C.presidentUid)}"><button id="ps">Save</button></div>
-    ${securityCard()}<div id="sx"></div><div id="rx"></div><div class="card"><h3>Activity log</h3>${logs.slice(0, 10).map(l => `<div class="row"><span>${esc(l.text)}</span><span class="mut">${new Date(l.at).toLocaleString()}</span></div>`).join("") || '<p class="mut">Empty</p>'}</div>`;
+    ${securityCard()}</div><div class="tabp" data-t="stu" style="display:none"><div id="sx"></div><div id="rx"></div></div>`;
     const up = (d, msg) => guard(async () => { await updateDoc(ref, d); if (msg) await log(msg); });
     $("tg").onclick = up({ enabled: !C.enabled }, C.enabled ? "Turned class mode OFF" : "Turned class mode ON");
     $("p30").onclick = up({ pauseUntil: Date.now() + 30 * 6e4 }, "Paused 30 min");
@@ -141,7 +196,7 @@ function openClass(u, id) {
     $("sv").onclick = () => up({ startMin: toMin($("st").value), endMin: toMin($("en").value) }, `Schedule set ${$("st").value}-${$("en").value}`)();
     $("ad").onclick = () => { const pkg = $("ap").value.trim(), name = $("an").value.trim() || pkg; if (pkg) up({ allowed: arrayUnion({ pkg, name }) }, "Allowed " + name)(); };
     $("ps").onclick = () => up({ presidentUid: $("pid").value.trim() }, "Assigned class president")();
-    bindSecurity(); drawStudents(); drawRecords();
+    bindSecurity(); drawStudents(); drawRecords(); bindTabs(); bindSubjects();
     document.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { const a = C.allowed.find(x => x.pkg === b.dataset.rm); up({ allowed: arrayRemove(a) }, "Removed " + a.name)(); });
     document.querySelectorAll("[data-a]").forEach(b => b.onclick = guard(async () => {
       const r = reqs.find(x => x.id === b.dataset.a);
