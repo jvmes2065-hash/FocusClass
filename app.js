@@ -14,7 +14,9 @@ const DN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const daysText = d => (d && d.length ? d : [2, 3, 4, 5, 6]).map(x => DN[x - 1]).join(", ");
 const dkey = ms => { const x = new Date(ms); return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); };
 const today = () => dkey(Date.now());
-const APK_URL = "https://github.com/jvmes2065-hash/FocusClass-App/releases/latest/download/app-debug.apk";
+const GH_APK = "https://github.com/jvmes2065-hash/FocusClass-App/releases/latest/download/FocusClass.apk";
+// On a short site address (Netlify or Cloudflare) the link is clean: yoursite/FocusClass.apk, which redirects to the latest build.
+const APK_URL = location.hostname.endsWith("github.io") || location.protocol === "file:" ? GH_APK : location.origin + "/FocusClass.apk";
 const downloadCard = () => /iPhone|iPad|iPod/.test(navigator.userAgent)
   ? `<div class="card"><h3>FocusClass app</h3><p class="mut">The app is for Android phones. On iPhone you can use this website.</p></div>`
   : `<div class="card"><h3>Download the Android app</h3><p class="mut">For students. It follows the class schedule and allowed apps set by the teacher.</p>
