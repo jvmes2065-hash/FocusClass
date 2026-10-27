@@ -12,6 +12,10 @@ const toMin = s => { const [h, m] = s.split(":"); return +h * 60 + +m; };
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const DN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const daysText = d => (d && d.length ? d : [2, 3, 4, 5, 6]).map(x => DN[x - 1]).join(", ");
+const MINS = [5, 10, 15, 20, 30, 45, 60, 90];
+const pausePicker = pfx => `<select id="${pfx}m">${MINS.map(m => `<option value="${m}">${m} minutes</option>`).join("")}<option value="custom">Custom...</option></select><input id="${pfx}c" type="number" min="1" max="600" placeholder="Minutes (1 to 600)" style="display:none">`;
+const bindPicker = pfx => { const sel = $(pfx + "m"); if (sel) sel.onchange = () => { $(pfx + "c").style.display = sel.value === "custom" ? "" : "none"; }; };
+const readMin = pfx => { const sel = $(pfx + "m"); return sel.value === "custom" ? +$(pfx + "c").value : +sel.value; };
 const dkey = ms => { const x = new Date(ms); return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); };
 const today = () => dkey(Date.now());
 const GH_APK = "https://github.com/jvmes2065-hash/FocusClass-App/releases/latest/download/FocusClass.apk";
@@ -101,7 +105,7 @@ function openClass(u, id) {
     sel = null;
     el.innerHTML = `<div class="card"><h3>Students (${studs.length})</h3>${[...studs].sort((a, b) => (a.email || "").localeCompare(b.email || "")).map(x => {
       const on = now - x.lastSeen < 180000;
-      return `<div class="row" data-s="${x.id}" style="cursor:pointer"><div style="display:flex;gap:10px;align-items:center"><div class="avatar">${esc((x.email || "?")[0].toUpperCase())}</div><div><b>${esc(x.email)}</b><div class="mut">Blocked today: ${bToday(x.id)} | Protection: ${x.admin ? "on" : "OFF"}</div></div></div><span class="tag" style="${on ? "" : "background:#FEE2E2;color:#991B1B"}">${on ? "Online" : "Offline"}</span></div>`;
+      return `<div class="row" data-s="${x.id}" style="cursor:pointer"><div style="display:flex;gap:10px;align-items:center"><div class="avatar">${esc((x.email || "?")[0].toUpperCase())}</div><div><b>${esc(x.email)}</b><div class="mut">Blocked today: ${bToday(x.id)} | Protection: ${x.admin ? "on" : "OFF"}${(C.studentPauses || {})[x.id] > Date.now() ? " | Paused" : ""}</div></div></div><span class="tag" style="${on ? "" : "background:#FEE2E2;color:#991B1B"}">${on ? "Online" : "Offline"}</span></div>`;
     }).join("") || '<p class="mut">No students yet. Share the class code.</p>'}<p class="mut">Tap a student to open their profile.</p></div>`;
     el.querySelectorAll("[data-s]").forEach(r => r.onclick = () => { sel = r.dataset.s; pday = ""; drawStudents(); drawRecords(); });
   };
@@ -126,10 +130,19 @@ function openClass(u, id) {
       <div class="stats"><div><b>${days.size}</b><span>Days present</span></div><div><b>${bToday(st.id)}</b><span>Blocked today</span></div><div><b>${blockedAll.length}</b><span>Blocked total</span></div><div><b>${alerts}</b><span>Alerts</span></div></div>
       <p class="mut">Last seen: ${st.lastSeen ? fmtTime(st.lastSeen) : "never"}<br>Uninstall protection: ${st.admin ? "on" : "OFF"}</p>
       ${top.length ? `<p><b>Most blocked apps:</b> ${top.map(t => esc(t[0]) + " (" + t[1] + ")").join(", ")}</p>` : ""}</div>
+    <div class="card"><h3>Pause FocusClass for this student</h3>
+      ${(C.studentPauses || {})[st.id] > now ? `<p class="mut">Paused until ${new Date(C.studentPauses[st.id]).toLocaleTimeString()}</p>` : `<p class="mut">This student's phone stops blocking for the time you choose.</p>`}
+      ${pausePicker("ps")}<button id="psgo" class="alt">Pause student</button>${(C.studentPauses || {})[st.id] > now ? '<button id="psend">End pause</button>' : ""}</div>
     <div class="card"><h3>Activity log</h3><input id="pday" type="date" value="${pday}"><button id="pall" class="alt">All days</button>
       ${list.slice(0, 100).map(r => `<div class="row"><div>${LBL[r.type] || esc(r.type)}<div class="mut">${esc(r.text)}</div></div><span class="mut">${fmtTime(r.at)}</span></div>`).join("") || '<p class="mut">No activity.</p>'}
       <button id="pcsv" class="alt">Download this student (CSV)</button></div>`;
     $("back").onclick = () => { sel = null; drawStudents(); drawRecords(); };
+    bindPicker("ps");
+    $("psgo").onclick = guard(async () => {
+      const m = readMin("ps"); if (!(m >= 1 && m <= 600)) return alert("Enter minutes from 1 to 600.");
+      await updateDoc(ref, { ["studentPauses." + st.id]: Date.now() + m * 6e4 }); await log(`Paused ${st.email} for ${m} min`);
+    });
+    if ($("psend")) $("psend").onclick = guard(async () => { await updateDoc(ref, { ["studentPauses." + st.id]: 0 }); await log(`Ended the pause for ${st.email}`); });
     $("pday").onchange = e => { pday = e.target.value; drawStudents(); };
     $("pall").onclick = () => { pday = ""; drawStudents(); };
     $("pcsv").onclick = () => csvDownload([["Date", "Time", "Type", "Details"], ...mine.map(r => [new Date(r.at).toLocaleDateString(), new Date(r.at).toLocaleTimeString(), r.type, r.text])],
@@ -181,7 +194,8 @@ function openClass(u, id) {
     $("cls").innerHTML = `<div class="tabs"><button data-tab="over">Overview</button><button data-tab="set">Settings</button><button data-tab="stu">Students</button></div><div class="tabp" data-t="over"><div class="card"><div class="mut">Class code (share with president and Android students)</div><div class="code">${id}</div>
       <p>Status: <b>${!C.enabled ? "OFF" : paused ? "Paused until " + new Date(C.pauseUntil).toLocaleTimeString() : "Class mode ON"}</b></p>
       <button id="tg" class="${C.enabled ? "bad" : "ok"}">${C.enabled ? "Turn OFF" : "Turn ON"}</button>
-      <button id="p30" class="alt">Pause 30 min</button><button id="p60" class="alt">Pause 60 min</button>${paused ? '<button id="p0">End pause</button>' : ""}</div>
+      <div class="mut" style="margin-top:8px">Pause the whole class for:</div>${pausePicker("pc")}<button id="pgo" class="alt">Pause class</button>${paused ? '<button id="p0">End pause</button>' : ""}
+      ${(() => { const sp = Object.entries(C.studentPauses || {}).filter(([, t]) => t > Date.now()); return sp.length ? `<div class="mut" style="margin-top:12px">Paused students</div>` + sp.map(([u, t]) => `<div class="row"><div>${esc((studs.find(x => x.id === u) || {}).email || u)}<div class="mut">until ${new Date(t).toLocaleTimeString()}</div></div><button class="alt" data-endp="${u}">End</button></div>`).join("") : ""; })()}</div>
     <div class="card"><h3>Pending requests (${pend.length})</h3>${pend.map(r => `<div class="row"><div>${r.type === "app" ? "Add app: <b>" + esc(r.name) + "</b> <span class=mut>" + esc(r.pkg) + "</span>" : "Pause for <b>" + r.minutes + " min</b>"}<div class="mut">${esc(r.reason)}</div></div>
       <div><button class="ok" data-a="${r.id}">Approve</button><button class="bad" data-d="${r.id}">Deny</button></div></div>`).join("") || '<p class="mut">None</p>'}</div>
     <div class="card"><h3>Activity log</h3>${logs.slice(0, 10).map(l => `<div class="row"><span>${esc(l.text)}</span><span class="mut">${new Date(l.at).toLocaleString()}</span></div>`).join("") || '<p class="mut">Empty</p>'}</div></div><div class="tabp" data-t="set" style="display:none"><div class="card"><h3>Schedule</h3><div class="days">${DN.map((n, i) => `<label class="dchip"><input type="checkbox" class="dayc" value="${i + 1}" ${(C.days || [2, 3, 4, 5, 6]).includes(i + 1) ? "checked" : ""}>${n}</label>`).join("")}</div>
@@ -194,8 +208,14 @@ function openClass(u, id) {
     ${securityCard()}</div><div class="tabp" data-t="stu" style="display:none"><div id="sx"></div><div id="rx"></div></div>`;
     const up = (d, msg) => guard(async () => { await updateDoc(ref, d); if (msg) await log(msg); });
     $("tg").onclick = up({ enabled: !C.enabled }, C.enabled ? "Turned class mode OFF" : "Turned class mode ON");
-    $("p30").onclick = up({ pauseUntil: Date.now() + 30 * 6e4 }, "Paused 30 min");
-    $("p60").onclick = up({ pauseUntil: Date.now() + 60 * 6e4 }, "Paused 60 min");
+    $("pgo").onclick = () => {
+      const m = readMin("pc"); if (!(m >= 1 && m <= 600)) return alert("Enter minutes from 1 to 600.");
+      up({ pauseUntil: Date.now() + m * 6e4 }, `Paused the class for ${m} min`)();
+    };
+    bindPicker("pc");
+    document.querySelectorAll("[data-endp]").forEach(b => b.onclick = guard(async () => {
+      await updateDoc(ref, { ["studentPauses." + b.dataset.endp]: 0 }); await log("Ended a student's pause");
+    }));
     if ($("p0")) $("p0").onclick = up({ pauseUntil: 0 }, "Ended pause");
     $("sv").onclick = () => {
       const days = [...document.querySelectorAll(".dayc")].filter(x => x.checked).map(x => +x.value);
@@ -244,7 +264,7 @@ function openAsPresident(u, id) {
       <div class="mut">Allowed apps</div>${C.allowed.map(a => `<span class="tag">${esc(a.name)}</span> `).join("")}
       ${C.presidentUid !== u.uid ? '<p class="err">Your teacher has not made you class president yet. Send them your ID above.</p>' : ""}</div>
     <div class="card"><h3>Request an app</h3><input id="an" placeholder="App name"><input id="ap" placeholder="Package name (e.g. com.duolingo)"><input id="ar" placeholder="Reason"><button id="sa">Send request</button></div>
-    <div class="card"><h3>Request a pause</h3><select id="pm"><option value="30">30 minutes</option><option value="60">60 minutes</option></select><input id="pr" placeholder="Reason"><button id="sp">Send request</button></div>
+    <div class="card"><h3>Request a pause</h3><select id="pm"><option value="5">5 minutes</option><option value="10">10 minutes</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">60 minutes</option></select><input id="pr" placeholder="Reason"><button id="sp">Send request</button></div>
     <div class="card"><h3>My requests</h3>${reqs.map(r => `<div class="row"><span>${r.type === "app" ? esc(r.name) : r.minutes + " min pause"}</span><span class="tag">${r.status}</span></div>`).join("") || '<p class="mut">None yet</p>'}</div>`;
     const send = d => guard(() => addDoc(collection(db, "classes", id, "requests"), { ...d, by: u.uid, status: "pending", at: Date.now() }));
     $("sa").onclick = () => { const pkg = $("ap").value.trim(); if (pkg) send({ type: "app", pkg, name: $("an").value.trim() || pkg, reason: $("ar").value.trim() })(); };
