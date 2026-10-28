@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut }
+import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, sendPasswordResetEmail }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, setDoc, updateDoc, addDoc, collection, onSnapshot, query, where, orderBy, limit, arrayUnion, arrayRemove }
+import { getFirestore, doc, setDoc, updateDoc, addDoc, collection, onSnapshot, query, where, orderBy, limit, arrayUnion, arrayRemove, deleteDoc }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 
@@ -12,6 +12,15 @@ const toMin = s => { const [h, m] = s.split(":"); return +h * 60 + +m; };
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const DN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const daysText = d => (d && d.length ? d : [2, 3, 4, 5, 6]).map(x => DN[x - 1]).join(", ");
+const QUICK = [
+  { pkg: "com.google.android.apps.classroom", name: "Google Classroom" }, { pkg: "com.google.android.apps.meetings", name: "Google Meet" },
+  { pkg: "us.zoom.videomeetings", name: "Zoom" }, { pkg: "com.microsoft.teams", name: "Microsoft Teams" },
+  { pkg: "com.google.android.apps.docs.editors.docs", name: "Google Docs" }, { pkg: "com.google.android.apps.docs.editors.sheets", name: "Google Sheets" },
+  { pkg: "com.google.android.apps.docs.editors.slides", name: "Google Slides" }, { pkg: "com.google.android.apps.docs", name: "Google Drive" },
+  { pkg: "com.google.android.apps.translate", name: "Google Translate" }, { pkg: "com.duolingo", name: "Duolingo" },
+  { pkg: "org.khanacademy.android", name: "Khan Academy" }, { pkg: "com.android.chrome", name: "Chrome" }
+];
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 const MINS = [5, 10, 15, 20, 30, 45, 60, 90];
 const pausePicker = pfx => `<select id="${pfx}m">${MINS.map(m => `<option value="${m}">${m} minutes</option>`).join("")}<option value="custom">Custom...</option></select><input id="${pfx}c" type="number" min="1" max="600" placeholder="Minutes (1 to 600)" style="display:none">`;
 const bindPicker = pfx => { const sel = $(pfx + "m"); if (sel) sel.onchange = () => { $(pfx + "c").style.display = sel.value === "custom" ? "" : "none"; }; };
@@ -22,7 +31,7 @@ const GH_APK = "https://github.com/jvmes2065-hash/FocusClass-App/releases/latest
 // On a short site address (Netlify or Cloudflare) the link is clean: yoursite/FocusClass.apk, which redirects to the latest build.
 const APK_URL = location.hostname.endsWith("github.io") || location.protocol === "file:" ? GH_APK : location.origin + "/FocusClass.apk";
 const downloadCard = () => /iPhone|iPad|iPod/.test(navigator.userAgent)
-  ? `<div class="card"><h3>FocusClass app</h3><p class="mut">The app is for Android phones. On iPhone you can use this website.</p></div>`
+  ? `<div class="card"><h3>FocusClass app</h3><p class="mut">The blocking app is for Android phones. On iPhone, use this website. To keep it like an app: tap Share, then Add to Home Screen.</p></div>`
   : `<div class="card"><h3>Download the Android app</h3><p class="mut">For students. It follows the class schedule and allowed apps set by the teacher.</p>
     <a class="btn" href="${APK_URL}">Download app</a><button class="alt" onclick="navigator.clipboard.writeText('${APK_URL}');this.textContent='Link copied'">Copy link</button>
     <p class="mut">1. Open the downloaded file and allow "Install unknown apps" if asked.<br>2. If a switch is greyed out: Settings, Apps, FocusClass, menu, Allow restricted settings.<br>3. Log in or sign up, then join your class with the code.</p></div>`;
@@ -50,17 +59,27 @@ function authView() {
   app.innerHTML = `<div class="hero">${LOGO(76)}<h1>FocusClass</h1><p>Stay focused. Learn better.</p></div><div class="wrap pull"><div class="card"><h2>Welcome</h2>
   <label class="mut">I am a</label><select id="role"><option value="teacher">Teacher</option><option value="president">Class president</option></select>
   <input id="em" type="email" placeholder="Email"><input id="pw" type="password" placeholder="Password (6+ characters)">
-  <button id="login">Log in</button><button id="reg" class="alt">Create account</button><p id="err" class="err"></p></div>${downloadCard()}</div>`;
+  <label class="mut" style="display:flex;gap:8px;align-items:flex-start;margin:6px 0"><input id="agree" type="checkbox" style="width:auto;margin-top:4px"><span>I agree to the <a href="#" id="pv">privacy notice</a> (needed to create an account).</span></label>
+  <button id="login">Log in</button><button id="reg" class="alt">Create account</button><button id="forgot" class="alt">Forgot password?</button><p id="err" class="err"></p></div>${downloadCard()}</div>`;
   const go = fn => async () => { localStorage.role = $("role").value;
     try { await fn(auth, $("em").value.trim(), $("pw").value); } catch (e) { $("err").textContent = e.message; } };
-  $("login").onclick = go(signInWithEmailAndPassword); $("reg").onclick = go(createUserWithEmailAndPassword);
+  $("login").onclick = go(signInWithEmailAndPassword); $("reg").onclick = () => {
+    if (!$("agree").checked) { $("err").style.color = ""; $("err").textContent = "Please tick the privacy notice to create an account."; return; }
+    go(createUserWithEmailAndPassword)();
+  };
+  $("pv").onclick = ev => { ev.preventDefault(); alert("FocusClass stores your email, the classes you join, attendance, the names of apps students tried to open during class, device model, and security alerts in Firebase. Teachers of your class can see this. It is used for class management and this study, and it is not sold. Ask your teacher to remove you if you want your class data removed."); };
+  $("forgot").onclick = async () => {
+    const e = $("em").value.trim(); if (!e) { $("err").style.color = ""; $("err").textContent = "Type your email first."; return; }
+    try { await sendPasswordResetEmail(auth, e); $("err").style.color = "var(--ok)"; $("err").textContent = "Reset link sent. Check your email (and spam)."; }
+    catch (x) { $("err").style.color = ""; $("err").textContent = x.message; }
+  };
 }
 
 /* ---------------- TEACHER ---------------- */
 function teacher(u) {
   app.innerHTML = header(u) + `<main id="main"></main>`; $("out").onclick = () => signOut(auth);
   subs.push(onSnapshot(query(collection(db, "classes"), where("teacherUid", "==", u.uid)), s => {
-    const list = s.docs.map(d => ({ id: d.id, ...d.data() }));
+    const list = s.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => !c.archived);
     const cur = localStorage.cur && list.find(c => c.id === localStorage.cur) ? localStorage.cur : list[0]?.id;
     $("main").innerHTML = `${downloadCard()}<div class="card"><h3>My classes</h3>
       ${list.length ? `<select id="pick">${list.map(c => `<option value="${c.id}" ${c.id === cur ? "selected" : ""}>${esc(c.name)} (${c.id})</option>`).join("")}</select>` : `<p class="mut">No class yet. Create your first one.</p>`}
@@ -73,12 +92,12 @@ function teacher(u) {
       localStorage.cur = code;
     });
     if ($("pick")) $("pick").onchange = e => { localStorage.cur = e.target.value; openClass(u, e.target.value); };
-    if (cur) openClass(u, cur);
+    if (cur) openClass(u, cur); else stop(cl);
   }));
 }
 
 function openClass(u, id) {
-  stop(cl); let C = null, reqs = [], logs = [], studs = [], recs = [], pinDoc = "", day = today(), sel = null, tab = "over", pday = "";
+  stop(cl); let C = null, reqs = [], logs = [], studs = [], recs = [], pinDoc = "", day = today(), sel = null, tab = "over", pday = "", surveys = [];
   const ref = doc(db, "classes", id);
   const log = text => addDoc(collection(db, "classes", id, "log"), { by: u.email, text, at: Date.now() });
 
@@ -128,8 +147,12 @@ function openClass(u, id) {
       <div style="display:flex;gap:12px;align-items:center;margin:10px 0"><div class="avatar">${esc((st.email || "?")[0].toUpperCase())}</div>
         <div><b>${esc(st.email)}</b><div><span class="tag" style="${on ? "" : "background:#FEE2E2;color:#991B1B"}">${on ? "Online" : "Offline"}</span></div></div></div>
       <div class="stats"><div><b>${days.size}</b><span>Days present</span></div><div><b>${bToday(st.id)}</b><span>Blocked today</span></div><div><b>${blockedAll.length}</b><span>Blocked total</span></div><div><b>${alerts}</b><span>Alerts</span></div></div>
-      <p class="mut">Last seen: ${st.lastSeen ? fmtTime(st.lastSeen) : "never"}<br>Uninstall protection: ${st.admin ? "on" : "OFF"}</p>
+      <p class="mut">Last seen: ${st.lastSeen ? fmtTime(st.lastSeen) : "never"}<br>Uninstall protection: ${st.admin ? "on" : "OFF"}${st.device ? "<br>Device: " + esc(st.device) + " (Android " + esc(st.android || "?") + ")" : ""}</p>
       ${top.length ? `<p><b>Most blocked apps:</b> ${top.map(t => esc(t[0]) + " (" + t[1] + ")").join(", ")}</p>` : ""}</div>
+    <div class="card"><h3>Study group and membership</h3>
+      <div class="mut">Control group: the app records what it would block, but does not block this student.</div>
+      <select id="grp"><option value="" ${grp(st.id) === "" ? "selected" : ""}>No group</option><option value="experiment" ${grp(st.id) === "experiment" ? "selected" : ""}>Experiment (blocked)</option><option value="control" ${grp(st.id) === "control" ? "selected" : ""}>Control (monitor only)</option></select>
+      <button id="rmst" class="bad">Remove from class</button></div>
     <div class="card"><h3>Pause FocusClass for this student</h3>
       ${(C.studentPauses || {})[st.id] > now ? `<p class="mut">Paused until ${new Date(C.studentPauses[st.id]).toLocaleTimeString()}</p>` : `<p class="mut">This student's phone stops blocking for the time you choose.</p>`}
       ${pausePicker("ps")}<button id="psgo" class="alt">Pause student</button>${(C.studentPauses || {})[st.id] > now ? '<button id="psend">End pause</button>' : ""}</div>
@@ -138,6 +161,12 @@ function openClass(u, id) {
       <button id="pcsv" class="alt">Download this student (CSV)</button></div>`;
     $("back").onclick = () => { sel = null; drawStudents(); drawRecords(); };
     bindPicker("ps");
+    $("grp").onchange = guard(async e => { await updateDoc(ref, { ["groups." + st.id]: e.target.value }); await log(`Set group of ${st.email}: ${e.target.value || "none"}`); });
+    $("rmst").onclick = guard(async () => {
+      if (!confirm("Remove " + st.email + " from this class? Their phone leaves the class automatically.")) return;
+      await updateDoc(ref, { removedUids: arrayUnion(st.id) }); await deleteDoc(doc(db, "classes", id, "students", st.id));
+      await log("Removed " + st.email + " from the class"); sel = null;
+    });
     $("psgo").onclick = guard(async () => {
       const m = readMin("ps"); if (!(m >= 1 && m <= 600)) return alert("Enter minutes from 1 to 600.");
       await updateDoc(ref, { ["studentPauses." + st.id]: Date.now() + m * 6e4 }); await log(`Paused ${st.email} for ${m} min`);
@@ -146,11 +175,11 @@ function openClass(u, id) {
     $("pday").onchange = e => { pday = e.target.value; drawStudents(); };
     $("pall").onclick = () => { pday = ""; drawStudents(); };
     $("pcsv").onclick = () => csvDownload([["Date", "Time", "Type", "Details"], ...mine.map(r => [new Date(r.at).toLocaleDateString(), new Date(r.at).toLocaleTimeString(), r.type, r.text])],
-      "focusclass-" + (st.email || "student") + ".csv");
+      "focusclass-" + who(st.id, st.email || "student") + ".csv");
   };
   const LBL = { checkin: "Checked in", joined: "Joined", left: "Left", blocked: "Blocked app", tamper: "Security alert" };
   const drawRecords = () => {
-    const el = $("rx"); if (!el) return; if (sel) { el.innerHTML = ""; return; }
+    const el = $("rx"); if (!el) return; drawExtras(); if (sel) { el.innerHTML = ""; return; }
     const list = recs.filter(r => dkey(r.at) === day);
     const present = new Set(list.filter(r => r.type === "checkin").map(r => r.email));
     const absent = studs.map(s => s.email).filter(e => !present.has(e));
@@ -158,30 +187,69 @@ function openClass(u, id) {
       <p><b>Present (${present.size}):</b> ${[...present].map(esc).join(", ") || "none"}</p>
       <p><b>Not checked in (${absent.length}):</b> ${absent.map(esc).join(", ") || "none"}</p>
       ${list.slice(0, 50).map(r => `<div class="row"><div>${esc(r.email)}<div class="mut">${LBL[r.type] || esc(r.type)}: ${esc(r.text)}</div></div><span class="mut">${new Date(r.at).toLocaleTimeString()}</span></div>`).join("") || '<p class="mut">No records for this day.</p>'}
-      <button id="csv" class="alt">Download all (CSV)</button></div>`;
+      <label class="mut" style="display:block;margin:6px 0"><input id="anon" type="checkbox" style="width:auto"> Anonymize names in downloads</label><button id="csv" class="alt">Download all (CSV)</button></div>`;
     $("day").onchange = e => { day = e.target.value || today(); drawRecords(); };
     $("csv").onclick = () => {
       const q = v => '"' + String(v ?? "").replace(/"/g, '""') + '"';
-      const rows = [["Date", "Time", "Student", "Type", "Details"], ...recs.map(r => [new Date(r.at).toLocaleDateString(), new Date(r.at).toLocaleTimeString(), r.email, r.type, r.text])];
+      const rows = [["Date", "Time", "Student", "Group", "Type", "Details"], ...recs.map(r => [new Date(r.at).toLocaleDateString(), new Date(r.at).toLocaleTimeString(), who(r.uid, r.email), grp(r.uid), r.type, r.text])];
       const a = document.createElement("a");
       a.href = URL.createObjectURL(new Blob([rows.map(r => r.map(q).join(",")).join("\n")], { type: "text/csv" }));
       a.download = "focusclass-" + id + ".csv"; a.click();
     };
   };
   const subjectsCard = () => `<div class="card"><h3>Subjects</h3><p class="mut">Add class periods. Phones are only restricted during these periods, and a subject can allow extra apps (like a math app). With no subjects, the schedule above is used.</p>
-    ${(C.periods || []).map((p, i) => `<div class="row"><div><b>${esc(p.name)}</b> <span class="mut">${fmt(p.start)} - ${fmt(p.end)}</span>${p.apps && p.apps.length ? `<div class="mut">Extra apps: ${p.apps.map(esc).join(", ")}</div>` : ""}</div><button class="bad" data-sub="${i}">Remove</button></div>`).join("")}
-    <input id="sn" placeholder="Subject (e.g. Math)"><input id="ss" type="time" value="08:00"><input id="se" type="time" value="09:00"><input id="sa" placeholder="Extra apps, comma separated (optional)"><button id="sadd">Add subject</button></div>`;
+    ${(C.periods || []).map((p, i) => `<div class="row"><div><b>${esc(p.name)}</b> <span class="mut">${fmt(p.start)} - ${fmt(p.end)}${p.days && p.days.length ? " (" + daysText(p.days) + ")" : ""}</span>${p.apps && p.apps.length ? `<div class="mut">Extra apps: ${p.apps.map(esc).join(", ")}</div>` : ""}</div><button class="bad" data-sub="${i}">Remove</button></div>`).join("")}
+    <input id="sn" placeholder="Subject (e.g. Math)"><input id="ss" type="time" value="08:00"><input id="se" type="time" value="09:00"><input id="sa" placeholder="Extra apps, comma separated (optional)"><div class="mut">Days for this subject (all ticked = every class day)</div><div class="days">${DN.map((n, i) => `<label class="dchip"><input type="checkbox" class="sdc" value="${i + 1}" checked>${n}</label>`).join("")}</div><button id="sadd">Add subject</button></div>`;
   const bindSubjects = () => {
     $("sadd").onclick = guard(async () => {
       const name = $("sn").value.trim(), start = toMin($("ss").value), end = toMin($("se").value);
       if (!name || !(end > start)) return alert("Enter a subject name, and a start time that is before the end time.");
       const apps = $("sa").value.split(",").map(x => x.trim()).filter(Boolean);
-      const list = [...(C.periods || []), { name, start, end, apps }].sort((a, b) => a.start - b.start);
+      const sdays = [...document.querySelectorAll(".sdc")].filter(x => x.checked).map(x => +x.value);
+      if (!sdays.length) return alert("Pick at least one day for this subject.");
+      const list = [...(C.periods || []), { name, start, end, apps, days: sdays.length === 7 ? [] : sdays }].sort((a, b) => a.start - b.start);
       await updateDoc(ref, { periods: list }); await log("Added subject " + name);
     });
     document.querySelectorAll("[data-sub]").forEach(b => b.onclick = guard(async () => {
       await updateDoc(ref, { periods: (C.periods || []).filter((_, i) => i !== +b.dataset.sub) }); await log("Removed a subject");
     }));
+  };
+  const holidaysCard = () => `<div class="card"><h3>No-class dates</h3><p class="mut">Holidays or suspended classes. Phones are not restricted on these dates.</p>
+    ${(C.holidays || []).map(d => `<div class="row"><span>${esc(d)}</span><button class="bad" data-hd="${esc(d)}">Remove</button></div>`).join("")}
+    <input id="hd" type="date"><button id="hadd">Add date</button></div>`;
+  const inClassNow = () => {
+    const d = new Date(), dow = d.getDay() + 1, m = d.getHours() * 60 + d.getMinutes();
+    if (!(C.days || [2, 3, 4, 5, 6]).includes(dow) || (C.holidays || []).includes(today())) return false;
+    if (!(C.periods && C.periods.length)) return m >= C.startMin && m < C.endMin;
+    return C.periods.filter(p => !p.days || !p.days.length || p.days.includes(dow)).some(p => m >= p.start && m < p.end);
+  };
+  const drawAttention = () => {
+    const el = $("att"); if (!el || !C) return; const now = Date.now(), t0 = today(), items = [];
+    const live = C.enabled && !(C.pauseUntil > now) && inClassNow();
+    studs.forEach(st => {
+      const alerts = recs.filter(r => r.uid === st.id && r.type === "tamper" && dkey(r.at) === t0).length;
+      if (alerts) items.push([st.email, alerts + " security alert" + (alerts > 1 ? "s" : "") + " today"]);
+      if (live && now - st.lastSeen > 180000) items.push([st.email, "Offline during class"]);
+    });
+    el.innerHTML = items.length ? `<div class="card"><h3>Needs attention (${items.length})</h3>${items.map(i => `<div class="row"><div><b>${esc(i[0])}</b><div class="mut">${i[1]}</div></div></div>`).join("")}</div>` : "";
+  };
+  const grp = uid => (C.groups || {})[uid] || "";
+  const who = (uid, email) => ($("anon") && $("anon").checked) ? "S" + (studs.map(x => x.id).sort().indexOf(uid) + 1) : email;
+  const drawExtras = () => {
+    const ex = $("ext"); if (!ex) return; if (sel) { ex.innerHTML = ""; return; }
+    const days = []; for (let i = 13; i >= 0; i--) days.push(dkey(Date.now() - i * 864e5));
+    const blk = days.map(d => recs.filter(r => r.type === "blocked" && dkey(r.at) === d).length);
+    const att = days.map(d => new Set(recs.filter(r => r.type === "checkin" && dkey(r.at) === d).map(r => r.uid)).size);
+    const bars = (arr, color) => { const mx = Math.max(1, ...arr); return `<div style="display:flex;align-items:flex-end;gap:3px;height:70px">${arr.map((v, i) => `<div title="${days[i]}: ${v}" style="flex:1;background:${color};height:${Math.round(v / mx * 100)}%;min-height:2px;border-radius:3px"></div>`).join("")}</div>`; };
+    const sc = surveys.map(x => x.score).filter(x => typeof x === "number");
+    const avg = sc.length ? sc.reduce((a, b) => a + b, 0) / sc.length : null;
+    ex.innerHTML = `<div class="card"><h3>Trends (last 14 days)</h3><div class="mut">Blocked attempts per day</div>${bars(blk, "var(--pri)")}
+      <div class="mut" style="margin-top:10px">Students present per day</div>${bars(att, "var(--ok)")}<div class="mut" style="margin-top:6px">${days[0]} to ${days[13]}</div></div>
+      <div class="card"><h3>Usability survey (SUS)</h3>${avg === null ? '<p class="mut">No responses yet. Students answer it in the app under My profile.</p>'
+        : `<p><b>${sc.length}</b> response${sc.length > 1 ? "s" : ""}. Average score: <b>${avg.toFixed(1)}</b> / 100 <span class="mut">(68 is average, above 80 is excellent)</span></p>`}
+      ${surveys.map(x => `<div class="row"><div>${esc(x.email)}<div class="mut">${grp(x.id) ? "Group: " + esc(grp(x.id)) : ""}</div></div><b>${typeof x.score === "number" ? x.score.toFixed(1) : "-"}</b></div>`).join("")}
+      <button id="svcsv" class="alt">Download survey (CSV)</button></div>`;
+    $("svcsv").onclick = () => csvDownload([["Student", "Group", "SUS score", "Answers (Q1 to Q10)"], ...surveys.map(x => [who(x.id, x.email), grp(x.id), x.score, x.answers])], "focusclass-survey-" + id + ".csv");
   };
   const showTab = () => {
     document.querySelectorAll(".tabp").forEach(p => p.style.display = p.dataset.t === tab ? "" : "none");
@@ -191,21 +259,21 @@ function openClass(u, id) {
   const draw = () => {
     if (!C || !$("cls")) return;
     const paused = C.pauseUntil > Date.now(), pend = reqs.filter(r => r.status === "pending");
-    $("cls").innerHTML = `<div class="tabs"><button data-tab="over">Overview</button><button data-tab="set">Settings</button><button data-tab="stu">Students</button></div><div class="tabp" data-t="over"><div class="card"><div class="mut">Class code (share with president and Android students)</div><div class="code">${id}</div>
+    $("cls").innerHTML = `<div class="tabs"><button data-tab="over">Overview</button><button data-tab="set">Settings</button><button data-tab="stu">Students</button></div><div class="tabp" data-t="over"><div id="att"></div><div class="card"><div class="mut">Class code (share with president and Android students)</div><div class="code">${id}</div>
       <p>Status: <b>${!C.enabled ? "OFF" : paused ? "Paused until " + new Date(C.pauseUntil).toLocaleTimeString() : "Class mode ON"}</b></p>
       <button id="tg" class="${C.enabled ? "bad" : "ok"}">${C.enabled ? "Turn OFF" : "Turn ON"}</button>
       <div class="mut" style="margin-top:8px">Pause the whole class for:</div>${pausePicker("pc")}<button id="pgo" class="alt">Pause class</button>${paused ? '<button id="p0">End pause</button>' : ""}
       ${(() => { const sp = Object.entries(C.studentPauses || {}).filter(([, t]) => t > Date.now()); return sp.length ? `<div class="mut" style="margin-top:12px">Paused students</div>` + sp.map(([u, t]) => `<div class="row"><div>${esc((studs.find(x => x.id === u) || {}).email || u)}<div class="mut">until ${new Date(t).toLocaleTimeString()}</div></div><button class="alt" data-endp="${u}">End</button></div>`).join("") : ""; })()}</div>
-    <div class="card"><h3>Pending requests (${pend.length})</h3>${pend.map(r => `<div class="row"><div>${r.type === "app" ? "Add app: <b>" + esc(r.name) + "</b> <span class=mut>" + esc(r.pkg) + "</span>" : "Pause for <b>" + r.minutes + " min</b>"}<div class="mut">${esc(r.reason)}</div></div>
+    <div class="card"><h3>Pending requests (${pend.length})</h3>${pend.map(r => `<div class="row"><div>${r.type === "app" ? "Add app: <b>" + esc(r.name) + "</b> <span class=mut>" + esc(r.pkg) + "</span>" : r.type === "student" ? "<b>" + esc(r.email) + "</b> asks for a <b>" + r.minutes + " min</b> pause" : "Pause for <b>" + r.minutes + " min</b>"}<div class="mut">${esc(r.reason)}</div></div>
       <div><button class="ok" data-a="${r.id}">Approve</button><button class="bad" data-d="${r.id}">Deny</button></div></div>`).join("") || '<p class="mut">None</p>'}</div>
     <div class="card"><h3>Activity log</h3>${logs.slice(0, 10).map(l => `<div class="row"><span>${esc(l.text)}</span><span class="mut">${new Date(l.at).toLocaleString()}</span></div>`).join("") || '<p class="mut">Empty</p>'}</div></div><div class="tabp" data-t="set" style="display:none"><div class="card"><h3>Schedule</h3><div class="days">${DN.map((n, i) => `<label class="dchip"><input type="checkbox" class="dayc" value="${i + 1}" ${(C.days || [2, 3, 4, 5, 6]).includes(i + 1) ? "checked" : ""}>${n}</label>`).join("")}</div>
       <input id="st" type="time" value="${fmt(C.startMin)}"><input id="en" type="time" value="${fmt(C.endMin)}"><button id="sv">Save schedule</button></div>
-    ${subjectsCard()}<div class="card"><h3>Allowed apps</h3>${C.allowed.map(a => `<div class="row"><div>${esc(a.name)} <span class="mut">${esc(a.pkg)}</span></div><button class="bad" data-rm="${esc(a.pkg)}">Remove</button></div>`).join("")}
+    ${holidaysCard()}${subjectsCard()}<div class="card"><h3>Allowed apps</h3><div class="mut">Quick add</div><div class="days">${QUICK.filter(a => !C.allowed.some(x => x.pkg === a.pkg)).map(a => `<button class="alt" data-qa="${a.pkg}" style="margin:0">+ ${a.name}</button>`).join("") || '<span class="mut">All quick apps are added</span>'}</div>${C.allowed.map(a => `<div class="row"><div>${esc(a.name)} <span class="mut">${esc(a.pkg)}</span></div><button class="bad" data-rm="${esc(a.pkg)}">Remove</button></div>`).join("")}
       <input id="an" placeholder="App name"><input id="ap" placeholder="Package name (e.g. com.duolingo)"><button id="ad">Add app</button>
       <p class="mut">Phone, SMS and the home screen are always allowed by the Android app.</p></div>
     <div class="card"><h3>Class president</h3><p class="mut">Ask your president to log in and send you their ID.</p>
       <input id="pid" placeholder="President's ID" value="${esc(C.presidentUid)}"><button id="ps">Save</button></div>
-    ${securityCard()}</div><div class="tabp" data-t="stu" style="display:none"><div id="sx"></div><div id="rx"></div></div>`;
+    ${securityCard()}<div class="card"><h3>Archive class</h3><p class="mut">Hides this class and removes it from every student's phone. Use it when the class is finished. To get a new class code, archive this class and create a new one.</p><button id="arch" class="bad">Archive this class</button></div></div><div class="tabp" data-t="stu" style="display:none"><div id="sx"></div><div id="rx"></div><div id="ext"></div></div>`;
     const up = (d, msg) => guard(async () => { await updateDoc(ref, d); if (msg) await log(msg); });
     $("tg").onclick = up({ enabled: !C.enabled }, C.enabled ? "Turned class mode OFF" : "Turned class mode ON");
     $("pgo").onclick = () => {
@@ -224,12 +292,18 @@ function openClass(u, id) {
     };
     $("ad").onclick = () => { const pkg = $("ap").value.trim(), name = $("an").value.trim() || pkg; if (pkg) up({ allowed: arrayUnion({ pkg, name }) }, "Allowed " + name)(); };
     $("ps").onclick = () => up({ presidentUid: $("pid").value.trim() }, "Assigned class president")();
+    document.querySelectorAll("[data-qa]").forEach(b => b.onclick = () => { const a = QUICK.find(x => x.pkg === b.dataset.qa); up({ allowed: arrayUnion({ pkg: a.pkg, name: a.name }) }, "Allowed " + a.name)(); });
+    $("hadd").onclick = () => { const d = $("hd").value; if (!d) return alert("Pick a date."); up({ holidays: [...new Set([...(C.holidays || []), d])].sort() }, "Added no-class date " + d)(); };
+    document.querySelectorAll("[data-hd]").forEach(b => b.onclick = () => up({ holidays: (C.holidays || []).filter(x => x !== b.dataset.hd) }, "Removed no-class date " + b.dataset.hd)());
+    $("arch").onclick = () => { if (confirm("Archive this class? Students will be removed from it on their phones.")) up({ archived: true }, "Archived the class")(); };
+    drawAttention();
     bindSecurity(); drawStudents(); drawRecords(); bindTabs(); bindSubjects();
     document.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { const a = C.allowed.find(x => x.pkg === b.dataset.rm); up({ allowed: arrayRemove(a) }, "Removed " + a.name)(); });
     document.querySelectorAll("[data-a]").forEach(b => b.onclick = guard(async () => {
       const r = reqs.find(x => x.id === b.dataset.a);
       await updateDoc(doc(db, "classes", id, "requests", r.id), { status: "approved" });
       if (r.type === "app") await updateDoc(ref, { allowed: arrayUnion({ pkg: r.pkg, name: r.name }) });
+      else if (r.type === "student") await updateDoc(ref, { ["studentPauses." + r.by]: Date.now() + r.minutes * 6e4 });
       else await updateDoc(ref, { pauseUntil: Date.now() + r.minutes * 6e4 });
       await log("Approved request: " + (r.type === "app" ? r.name : r.minutes + " min pause"));
     }));
@@ -239,10 +313,11 @@ function openClass(u, id) {
   cl.push(onSnapshot(ref, s => { C = s.data(); draw(); }));
   cl.push(onSnapshot(collection(db, "classes", id, "requests"), s => { reqs = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.at - a.at); draw(); }));
   cl.push(onSnapshot(collection(db, "classes", id, "log"), s => { logs = s.docs.map(d => d.data()).sort((a, b) => b.at - a.at); draw(); }));
-  cl.push(onSnapshot(collection(db, "classes", id, "students"), s => { studs = s.docs.map(d => ({ id: d.id, ...d.data() })); drawStudents(); drawRecords(); }));
-  cl.push(onSnapshot(query(collection(db, "classes", id, "records"), orderBy("at", "desc"), limit(500)), s => { recs = s.docs.map(d => d.data()); drawRecords(); }));
+  cl.push(onSnapshot(collection(db, "classes", id, "students"), s => { studs = s.docs.map(d => ({ id: d.id, ...d.data() })); drawStudents(); drawRecords(); drawAttention(); }));
+  cl.push(onSnapshot(query(collection(db, "classes", id, "records"), orderBy("at", "desc"), limit(500)), s => { recs = s.docs.map(d => d.data()); drawRecords(); drawAttention(); }));
+  cl.push(onSnapshot(collection(db, "classes", id, "surveys"), s => { surveys = s.docs.map(d => ({ id: d.id, ...d.data() })); drawRecords(); }, () => {}));
   cl.push(onSnapshot(doc(db, "classes", id, "private", "pin"), s => { pinDoc = s.exists() ? s.data().pin : ""; if (C) draw(); }, () => {}));
-  const tm = setInterval(drawStudents, 30000); cl.push(() => clearInterval(tm));
+  const tm = setInterval(() => { drawStudents(); drawAttention(); }, 30000); cl.push(() => clearInterval(tm));
 }
 
 /* ---------------- CLASS PRESIDENT ---------------- */
