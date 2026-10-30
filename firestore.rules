@@ -3,23 +3,55 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function cls(c) { return get(/databases/$(database)/documents/classes/$(c)).data; }
     function signedIn() { return request.auth != null; }
+    function isTeacher(c) {
+      return signedIn() && (cls(c).teacherUid == request.auth.uid || request.auth.uid in cls(c).get('coTeachers', []));
+    }
+
+    // Owner-only settings: create a document config/invite with a field "code" (text) in the Firebase console.
+    match /config/{d} { allow read, write: if false; }
+    match /teachers/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid
+                    && request.resource.data.invite == get(/databases/$(database)/documents/config/invite).data.code;
+    }
 
     match /classes/{code} {
-      // Students' Android app (anonymous sign-in) can read one class by its code, but cannot list classes.
       allow get: if signedIn();
-      allow list: if signedIn() && resource.data.teacherUid == request.auth.uid;
-      allow create: if signedIn() && request.resource.data.teacherUid == request.auth.uid;
-      allow update: if signedIn() && resource.data.teacherUid == request.auth.uid
-                    && request.resource.data.teacherUid == request.auth.uid;
+      allow list: if signedIn() && (resource.data.teacherUid == request.auth.uid || request.auth.uid in resource.data.coTeachers);
+      allow create: if signedIn() && request.resource.data.teacherUid == request.auth.uid
+                    && exists(/databases/$(database)/documents/teachers/$(request.auth.uid));
+      allow update: if signedIn() && request.resource.data.teacherUid == resource.data.teacherUid
+                    && (resource.data.teacherUid == request.auth.uid
+                        || (request.auth.uid in resource.data.get('coTeachers', [])
+                            && request.resource.data.get('coTeachers', []) == resource.data.get('coTeachers', [])));
 
       match /requests/{r} {
-        allow read: if signedIn() && (cls(code).teacherUid == request.auth.uid || cls(code).presidentUid == request.auth.uid);
-        allow create: if signedIn() && cls(code).presidentUid == request.auth.uid
-                      && request.resource.data.by == request.auth.uid && request.resource.data.status == "pending";
-        allow update: if signedIn() && cls(code).teacherUid == request.auth.uid;
+        allow read: if isTeacher(code) || (signedIn() && cls(code).presidentUid == request.auth.uid);
+        allow create: if signedIn() && request.resource.data.by == request.auth.uid && request.resource.data.status == "pending"
+                      && (cls(code).presidentUid == request.auth.uid || request.resource.data.type == "student");
+        allow update: if isTeacher(code);
       }
       match /log/{l} {
-        allow read, create: if signedIn() && cls(code).teacherUid == request.auth.uid;
+        allow read, create: if isTeacher(code);
+      }
+      match /students/{uid} {
+        allow read, delete: if isTeacher(code);
+        allow create, update: if signedIn() && request.auth.uid == uid;
+      }
+      match /records/{r} {
+        allow read: if isTeacher(code);
+        allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      }
+      match /surveys/{uid} {
+        allow read: if isTeacher(code);
+        allow create, update: if signedIn() && request.auth.uid == uid;
+      }
+      match /apps/{uid} {
+        allow read: if isTeacher(code);
+        allow create, update: if signedIn() && request.auth.uid == uid;
+      }
+      match /private/{d} {
+        allow read, write: if isTeacher(code);
       }
     }
   }
