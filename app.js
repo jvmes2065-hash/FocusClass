@@ -90,7 +90,7 @@ function teacher(u) {
       <div class="card"><h3>Your teacher ID</h3><p class="mut">Give this to a teacher who will co-manage one of your classes.</p><input readonly value="${u.uid}" onclick="this.select()"></div><div id="cls"></div>`;
     if ($("regbtn")) $("regbtn").onclick = async () => {
       try { await setDoc(doc(db, "teachers", u.uid), { invite: $("invite").value.trim(), email: u.email }); reg = true; render(); }
-      catch (e) { alert("That invite code is not valid."); }
+      catch (e) { alert("Could not verify. Check the invite code, and that the Firestore rules are published.\n\nDetails: " + e.message); }
     };
     if ($("mk")) $("mk").onclick = guard(async () => {
       const name = $("cname").value.trim(); if (!name) return;
